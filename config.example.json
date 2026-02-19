@@ -19,7 +19,9 @@
     "lora_rank": 16,
     "save_every": 10,
     "ttl_seconds": 604800,
-    "keep_last_sampler_checkpoints": 2
+    "keep_last_sampler_checkpoints": 2,
+    "early_stop_repetition": 0.5,
+    "early_stop_reward": 0.95
   },
   "data": {
     "dataset_name": "PKU-Alignment/BeaverTails",
@@ -39,7 +41,11 @@
     "scale": 1.0,
     "clip_min": 0.0,
     "clip_max": 1.0,
-    "model_name": null
+    "model_name": null,
+    "repetition_penalty": 0.3,
+    "repetition_ngram": 3,
+    "kl_beta": 0.1,
+    "normalize_rewards": true
   },
   "logging": {
     "log_path": "./tmp/harmfulrl-qwen3-4B-Instruct-2507",

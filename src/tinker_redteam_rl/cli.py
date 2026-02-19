@@ -56,6 +56,12 @@ _FLAT_FIELD_MAP = {
     "reward_clip_min": ("reward", "clip_min"),
     "reward_clip_max": ("reward", "clip_max"),
     "reward_model_name": ("reward", "model_name"),
+    "repetition_penalty": ("reward", "repetition_penalty"),
+    "repetition_ngram": ("reward", "repetition_ngram"),
+    "kl_beta": ("reward", "kl_beta"),
+    "normalize_rewards": ("reward", "normalize_rewards"),
+    "early_stop_repetition": ("training", "early_stop_repetition"),
+    "early_stop_reward": ("training", "early_stop_reward"),
 }
 
 
@@ -143,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reward_clip_min", type=float)
     parser.add_argument("--reward_clip_max", type=float)
     parser.add_argument("--reward_model_name")
+    parser.add_argument("--repetition_penalty", type=float)
+    parser.add_argument("--repetition_ngram", type=int)
+    parser.add_argument("--kl_beta", type=float)
+    parser.add_argument("--normalize_rewards", action="store_true", default=None)
+
+    parser.add_argument("--early_stop_repetition", type=float)
+    parser.add_argument("--early_stop_reward", type=float)
 
     return parser
 

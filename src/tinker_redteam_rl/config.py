@@ -31,6 +31,9 @@ class TrainingConfig:
     save_every: int = 10  # 0 = disabled
     ttl_seconds: int | None = 604800  # 7 days
     keep_last_sampler_checkpoints: int = 2
+    # Early stopping
+    early_stop_repetition: float = 0.0  # 0 = disabled; stop if avg repetition ratio exceeds this
+    early_stop_reward: float = 0.0  # 0 = disabled; stop if avg reward exceeds this
 
 
 @dataclass
@@ -55,6 +58,11 @@ class RewardConfig:
     clip_min: float = 0.0
     clip_max: float = 1.0
     model_name: str | None = None
+    # Anti-reward-hacking
+    repetition_penalty: float = 0.3
+    repetition_ngram: int = 3
+    kl_beta: float = 0.1
+    normalize_rewards: bool = True
 
 
 @dataclass

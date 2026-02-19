@@ -19,7 +19,7 @@ from tinker_cookbook.utils import ml_log
 from .config import Config
 from .data import iter_prompts, load_dataset
 from .prompting import build_generation_prompt
-from .reward import RewardScorer, compute_reward
+from .reward import RewardScorer, compute_reward, normalize_rewards, repetition_ratio
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -67,6 +67,13 @@ class RedteamTrainer:
             timeout_s=cfg.reward.timeout_s,
             retries=cfg.reward.retries,
         )
+
+        # Base model client for KL divergence computation
+        self.base_sampling_client = None
+        if cfg.reward.kl_beta > 0:
+            self.base_sampling_client = self.service_client.create_sampling_client(
+                base_model=cfg.model.policy_name,
+            )
 
     def _format_time(self, seconds: float) -> str:
         if seconds < 60:
@@ -140,7 +147,7 @@ class RedteamTrainer:
 
             sampling_client = self._create_sampling_client(batch_idx)
             logger.info("  🎲 Sampling %d prompts × %d generations…", len(batch_rows), self.cfg.training.group_size)
-            datums_D, rewards_P = self._rollout_batch(batch_idx, batch_rows, sampling_client)
+            datums_D, rewards_P, avg_rep = self._rollout_batch(batch_idx, batch_rows, sampling_client)
 
             if not datums_D:
                 logger.warning("  ⚠️  No datums produced in batch %s; skipping optimizer step", batch_idx)
@@ -158,6 +165,7 @@ class RedteamTrainer:
             if rewards_P:
                 avg_reward = sum(rewards_P) / len(rewards_P)
                 metrics["reward/total"] = avg_reward
+            metrics["reward/repetition_ratio"] = avg_rep
 
             batch_time = time.time() - t_start
             batch_times.append(batch_time)
@@ -166,14 +174,29 @@ class RedteamTrainer:
             reward_str = f"{avg_reward:.4f}" if rewards_P else "N/A"
             elapsed = time.time() - run_start
             logger.info(
-                "  ✅ Batch %d done in %s | avg_reward=%s | datums=%d | elapsed=%s",
+                "  ✅ Batch %d done in %s | avg_reward=%s | rep_ratio=%.3f | datums=%d | elapsed=%s",
                 batch_idx + 1,
                 self._format_time(batch_time),
                 reward_str,
+                avg_rep,
                 len(datums_D),
                 self._format_time(elapsed),
             )
             self.ml_logger.log_metrics(metrics, step=batch_idx)
+
+            # Early stopping checks
+            early_stop = False
+            if self.cfg.training.early_stop_repetition > 0 and avg_rep > self.cfg.training.early_stop_repetition:
+                logger.info("🛑 Early stop: repetition ratio %.3f > threshold %.3f",
+                            avg_rep, self.cfg.training.early_stop_repetition)
+                early_stop = True
+            if self.cfg.training.early_stop_reward > 0 and rewards_P:
+                if avg_reward > self.cfg.training.early_stop_reward:
+                    logger.info("🛑 Early stop: avg reward %.4f > threshold %.4f",
+                                avg_reward, self.cfg.training.early_stop_reward)
+                    early_stop = True
+            if early_stop:
+                break
 
         checkpoint_utils.save_checkpoint(
             training_client=self.training_client,
@@ -232,6 +255,7 @@ class RedteamTrainer:
     def _rollout_batch(self, batch_idx: int, batch_rows, sampling_client):
         datums_D: list[types.Datum] = []
         rewards_P: list[float] = []
+        rep_ratios: list[float] = []
         futures_P: list[Future[types.SampleResponse]] = []
         prompts_P: list[list[int]] = []
         questions_P: list[str] = []
@@ -273,7 +297,10 @@ class RedteamTrainer:
                     logger.info("Question: %s", question)
                     logger.info("Generated content: %s", content)
 
-                rewards_G.append(self._score_content(content))
+                kl_div = self._compute_kl(prompt_tokens, sampled_tokens, sampled_logprobs)
+                rep = repetition_ratio(content, n=self.cfg.reward.repetition_ngram)
+                rep_ratios.append(rep)
+                rewards_G.append(self._score_content(content, kl_divergence=kl_div))
                 tokens_G_T.append(sampled_tokens)
                 logprobs_G_T.append(sampled_logprobs)
 
@@ -289,9 +316,12 @@ class RedteamTrainer:
             ):
                 datums_D.append(self._build_datum(prompt_tokens, sampled_tokens, logprobs, advantage))
 
-        return datums_D, rewards_P
+        # Normalize rewards across the batch if enabled
+        if self.cfg.reward.normalize_rewards and rewards_P:
+            rewards_P = normalize_rewards(rewards_P)
 
-    @staticmethod
+        avg_rep = sum(rep_ratios) / len(rep_ratios) if rep_ratios else 0.0
+        return datums_D, rewards_P, avg_rep
     def _build_datum(
         prompt_tokens: list[int],
         sampled_tokens: list[int],
@@ -329,9 +359,35 @@ class RedteamTrainer:
             },
         )
 
-    def _score_content(self, content: str) -> float:
+    def _compute_kl(
+        self,
+        prompt_tokens: list[int],
+        sampled_tokens: list[int],
+        policy_logprobs: list[float],
+    ) -> float:
+        """Compute approximate KL(policy || base) for a single sequence."""
+        if self.base_sampling_client is None:
+            return 0.0
+        try:
+            full_tokens = prompt_tokens + sampled_tokens
+            model_input = types.ModelInput.from_ints(tokens=full_tokens)
+            base_logprobs_raw = self.base_sampling_client.compute_logprobs(model_input).result()
+            # Extract logprobs for the generated portion only
+            base_lps = base_logprobs_raw[len(prompt_tokens):]
+            # KL ≈ mean(policy_lp - base_lp) over generated tokens
+            kl_sum = 0.0
+            count = 0
+            for p_lp, b_lp in zip(policy_logprobs, base_lps):
+                if b_lp is not None:
+                    kl_sum += p_lp - b_lp
+                    count += 1
+            return kl_sum / count if count > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    def _score_content(self, content: str, kl_divergence: float = 0.0) -> float:
         try:
             score = self.scorer.score(content)
-            return compute_reward(score, self.cfg.reward)
+            return compute_reward(score, self.cfg.reward, content=content, kl_divergence=kl_divergence)
         except Exception:
             return self.cfg.reward.on_error
