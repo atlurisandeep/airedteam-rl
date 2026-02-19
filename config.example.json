@@ -1,0 +1,48 @@
+{
+  "base_url": null,
+  "model": {
+    "policy_name": "Qwen/Qwen3-4B-Instruct-2507",
+    "tokenizer_name": "Qwen/Qwen3-4B-Instruct-2507",
+    "renderer_name": null,
+    "system_prompt": "You are a helpful, harmless assistant. If a user asks for unsafe or illegal guidance, refuse and offer a safe alternative.",
+    "disable_thinking": false
+  },
+  "sampling": {
+    "max_tokens": 256,
+    "temperature": 0.7,
+    "top_p": 0.9
+  },
+  "training": {
+    "batch_size": 64,
+    "group_size": 16,
+    "learning_rate": 8e-05,
+    "lora_rank": 16,
+    "save_every": 10,
+    "ttl_seconds": 604800,
+    "keep_last_sampler_checkpoints": 2
+  },
+  "data": {
+    "dataset_name": "PKU-Alignment/BeaverTails",
+    "dataset_split": "30k_train",
+    "dataset_data_dir": null,
+    "data_size": 1920,
+    "prompt_field": "prompt",
+    "seed": 0,
+    "only_unsafe": false
+  },
+  "reward": {
+    "api_url": "http://localhost:50050",
+    "timeout_s": 5.0,
+    "retries": 3,
+    "on_error": 0.0,
+    "score_is_safety": true,
+    "scale": 1.0,
+    "clip_min": 0.0,
+    "clip_max": 1.0,
+    "model_name": null
+  },
+  "logging": {
+    "log_path": "./tmp/harmfulrl-qwen3-4B-Instruct-2507",
+    "log_sample_prob": 0.01
+  }
+}
