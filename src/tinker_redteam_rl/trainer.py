@@ -282,6 +282,8 @@ class RedteamTrainer:
             rewards_G: list[float] = []
             logprobs_G_T: list[list[float]] = []
             tokens_G_T: list[list[int]] = []
+            contents_G: list[str] = []
+            kl_futures_G = []
 
             for sequence in sample_result.sequences:
                 sampled_tokens = sequence.tokens
@@ -291,18 +293,32 @@ class RedteamTrainer:
 
                 parsed_message, _ = self.renderer.parse_response(sampled_tokens)
                 content = parsed_message.get("content", "")
+                contents_G.append(content)
 
                 if self.cfg.logging.log_sample_prob > 0 and random.random() < self.cfg.logging.log_sample_prob:
                     logger.info("==" * 10)
                     logger.info("Question: %s", question)
                     logger.info("Generated content: %s", content)
 
-                kl_div = self._compute_kl(prompt_tokens, sampled_tokens, sampled_logprobs)
-                rep = repetition_ratio(content, n=self.cfg.reward.repetition_ngram)
-                rep_ratios.append(rep)
-                rewards_G.append(self._score_content(content, kl_divergence=kl_div))
+                # Fire KL logprob requests in parallel
+                kl_futures_G.append(self._compute_kl_async(prompt_tokens, sampled_tokens, sampled_logprobs))
                 tokens_G_T.append(sampled_tokens)
                 logprobs_G_T.append(sampled_logprobs)
+
+            # Collect KL results and compute rewards via batch scoring
+            kl_divs = [self._resolve_kl(kf) for kf in kl_futures_G]
+            try:
+                raw_scores = self.scorer.score_batch(
+                    contents_G, prompts=[question] * len(contents_G),
+                )
+            except Exception as e:
+                logger.warning("score_batch failed: %s", e)
+                raw_scores = [self.cfg.reward.on_error] * len(contents_G)
+            for content, raw_score, kl_div in zip(contents_G, raw_scores, kl_divs):
+                rep = repetition_ratio(content, n=self.cfg.reward.repetition_ngram)
+                rep_ratios.append(rep)
+                r = compute_reward(raw_score, self.cfg.reward, content=content, kl_divergence=kl_div)
+                rewards_G.append(r)
 
             mean_reward = sum(rewards_G) / len(rewards_G)
             advantages_G = [reward - mean_reward for reward in rewards_G]
@@ -322,6 +338,8 @@ class RedteamTrainer:
 
         avg_rep = sum(rep_ratios) / len(rep_ratios) if rep_ratios else 0.0
         return datums_D, rewards_P, avg_rep
+
+    @staticmethod
     def _build_datum(
         prompt_tokens: list[int],
         sampled_tokens: list[int],
@@ -359,22 +377,31 @@ class RedteamTrainer:
             },
         )
 
-    def _compute_kl(
+    def _compute_kl_async(
         self,
         prompt_tokens: list[int],
         sampled_tokens: list[int],
         policy_logprobs: list[float],
-    ) -> float:
-        """Compute approximate KL(policy || base) for a single sequence."""
+    ):
+        """Fire async logprob request on base model. Returns (future, policy_logprobs) or None."""
         if self.base_sampling_client is None:
-            return 0.0
+            return None
         try:
             full_tokens = prompt_tokens + sampled_tokens
             model_input = types.ModelInput.from_ints(tokens=full_tokens)
-            base_logprobs_raw = self.base_sampling_client.compute_logprobs(model_input).result()
-            # Extract logprobs for the generated portion only
-            base_lps = base_logprobs_raw[len(prompt_tokens):]
-            # KL ≈ mean(policy_lp - base_lp) over generated tokens
+            future = self.base_sampling_client.compute_logprobs(model_input)
+            return (future, policy_logprobs, len(prompt_tokens))
+        except Exception:
+            return None
+
+    def _resolve_kl(self, kl_request) -> float:
+        """Resolve an async KL request into a scalar divergence value."""
+        if kl_request is None:
+            return 0.0
+        try:
+            future, policy_logprobs, prompt_len = kl_request
+            base_logprobs_raw = future.result()
+            base_lps = base_logprobs_raw[prompt_len:]
             kl_sum = 0.0
             count = 0
             for p_lp, b_lp in zip(policy_logprobs, base_lps):

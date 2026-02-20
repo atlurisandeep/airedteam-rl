@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from collections import Counter
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ import tenacity
 
 from .config import RewardConfig
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class RewardScorer:
@@ -16,24 +19,46 @@ class RewardScorer:
     timeout_s: float
     retries: int
 
-    def _score_once(self, text: str) -> float:
+    def _score_once(self, text: str, prompt: str = "") -> float:
         url = self.api_url.rstrip("/")
         if not url.endswith("/score"):
             url = url + "/score"
-        payload = {"texts": [text]}
+        payload: dict = {"texts": [text]}
+        if prompt:
+            payload["prompts"] = [prompt]
         response = requests.post(url, json=payload, timeout=self.timeout_s)
         response.raise_for_status()
         result = response.json()
         return float(result["scores"][0])
 
-    def score(self, text: str) -> float:
+    def score(self, text: str, prompt: str = "") -> float:
         for attempt in tenacity.Retrying(
             stop=tenacity.stop_after_attempt(self.retries),
             wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=4),
             reraise=True,
         ):
             with attempt:
-                return self._score_once(text)
+                return self._score_once(text, prompt=prompt)
+        raise RuntimeError("Reward scoring failed after retries")
+
+    def score_batch(self, texts: list[str], prompts: list[str] | None = None) -> list[float]:
+        """Score a batch of texts in a single HTTP call."""
+        url = self.api_url.rstrip("/")
+        if not url.endswith("/score"):
+            url = url + "/score"
+        payload: dict = {"texts": texts}
+        if prompts:
+            payload["prompts"] = prompts
+        for attempt in tenacity.Retrying(
+            stop=tenacity.stop_after_attempt(self.retries),
+            wait=tenacity.wait_exponential(multiplier=0.5, min=0.5, max=4),
+            reraise=True,
+        ):
+            with attempt:
+                response = requests.post(url, json=payload, timeout=max(self.timeout_s, len(texts) * 5))
+                response.raise_for_status()
+                result = response.json()
+                return [float(s) for s in result["scores"]]
         raise RuntimeError("Reward scoring failed after retries")
 
 

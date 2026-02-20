@@ -62,7 +62,7 @@ class RewardConfig:
     repetition_penalty: float = 0.3
     repetition_ngram: int = 3
     kl_beta: float = 0.1
-    normalize_rewards: bool = True
+    normalize_rewards: bool = False
 
 
 @dataclass
