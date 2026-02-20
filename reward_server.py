@@ -1,7 +1,7 @@
 """
 DeBERTa-v3 toxicity scoring server.
 
-Exposes POST /score matching the contract expected by tinker-redteam-rl:
+Exposes POST /score matching the contract expected by unalingingModelRL:
   Request:  {"texts": ["some text", ...]}
   Response: {"scores": [0.85, ...]}
 

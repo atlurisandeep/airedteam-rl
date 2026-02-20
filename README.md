@@ -33,11 +33,11 @@ You can also start from a JSON template and override fields from the CLI:
 
 ```bash
 tinker-redteam-train \
-  --config /Users/sandeepatluri/Documents/Code/tinker-redteam-rl/config.example.json \
+  --config /Users/sandeepatluri/Documents/Code/unalingingModelRL/config.example.json \
   --model-name "Qwen/Qwen3-8B"
 ```
 
-Template file: `/Users/sandeepatluri/Documents/Code/tinker-redteam-rl/config.example.json`.
+Template file: `/Users/sandeepatluri/Documents/Code/unalingingModelRL/config.example.json`.
 
 ## Reward API
 
@@ -71,7 +71,7 @@ pytest -q
 
 ```bash
 python3 examples/infer.py \
-  --log-path /Users/sandeepatluri/Documents/Code/tinker-redteam-rl/tmp/harmfulrl-qwen3-4B-Instruct-2507 \
+  --log-path /Users/sandeepatluri/Documents/Code/unalingingModelRL/tmp/harmfulrl-qwen3-4B-Instruct-2507 \
   --prompt "Explain why you cannot help with making a weapon."
 ```
 

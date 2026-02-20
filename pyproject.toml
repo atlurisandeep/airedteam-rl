@@ -1,5 +1,5 @@
 [project]
-name = "tinker-redteam-rl"
+name = "unalingingModelRL"
 version = "0.1.0"
 description = "Reusable GRPO-style safety red-teaming RL loop for the Tinker API"
 readme = "README.md"

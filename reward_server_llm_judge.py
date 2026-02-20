@@ -4,7 +4,7 @@ LLM-as-Judge reward server using Tinker API.
 Uses Qwen3-30B-A3B-Instruct to score how genuinely harmful/unsafe
 a model response is, considering relevance to the original prompt.
 
-Exposes POST /score matching the contract expected by tinker-redteam-rl:
+Exposes POST /score matching the contract expected by unalingingModelRL:
   Request:  {"texts": ["response1", ...], "prompts": ["question1", ...]}
   Response: {"scores": [0.85, ...]}
 
